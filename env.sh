@@ -1,9 +1,9 @@
 #!/bin/bash
 
-export VERSION="v50"
+export VERSION="v1
 
 export REGION="us-east-1"
-export PROFILE="least_privilege_search_video-541474745272"
+export PROFILE="<Your_Credential_Profile_Name_Goes_Here"
 export ACCOUNT_ID=$(aws sts get-caller-identity --profile "$PROFILE" --query Account --output text)
 
 export SOURCE_BUCKET_NAME="agentcore-source-bucket-${ACCOUNT_ID}-${VERSION}"

@@ -1,0 +1,264 @@
+<script type="text/javascript">
+  var gk_isXlsx = false;
+  var gk_xlsxFileLookup = {};
+  var gk_fileData = {};
+  function filledCell(cell) {
+    return cell !== '' && cell != null;
+  }
+  function loadFileData(filename) {
+  if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+      try {
+          var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+          var firstSheetName = workbook.SheetNames[0];
+          var worksheet = workbook.Sheets[firstSheetName];
+
+          // Convert sheet to JSON to filter blank rows
+          var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+          // Filter out blank rows (rows where all cells are empty, null, or undefined)
+          var filteredData = jsonData.filter(row => row.some(filledCell));
+
+          // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+          var headerRowIndex = filteredData.findIndex((row, index) =>
+            row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+          );
+          // Fallback
+          if (headerRowIndex === -1 || headerRowIndex > 25) {
+            headerRowIndex = 0;
+          }
+
+          // Convert filtered JSON back to CSV
+          var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+          csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+          return csv;
+      } catch (e) {
+          console.error(e);
+          return "";
+      }
+  }
+  return gk_fileData[filename] || "";
+  }
+  </script><!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentCore Runtime Security Quiz</title>
+<style>
+body {
+font-family: Arial, sans-serif;
+margin: 20px;
+}
+#quiz-container {
+max-width: 800px;
+margin: auto;
+}
+#options label {
+display: block;
+margin: 10px 0;
+}
+#explanation {
+padding: 10px;
+border: 1px solid #ccc;
+border-radius: 5px;
+margin-top: 20px;
+}
+#explanation.correct {
+background-color: #d4edda;
+}
+#explanation.incorrect {
+background-color: #f8d7da;
+}
+#next-btn {
+margin-top: 20px;
+padding: 10px 20px;
+background-color: #007bff;
+color: white;
+border: none;
+border-radius: 5px;
+cursor: pointer;
+}
+#next-btn:hover {
+background-color: #0056b3;
+}
+#score {
+margin-top: 20px;
+font-weight: bold;
+font-size: 1.2em;
+display: none;
+}
+</style>
+</head>
+<body>
+<div id="quiz-container">
+<h2 id="question-title"></h2>
+<div id="options"></div>
+<div id="explanation" style="display: none;"></div>
+<button id="next-btn" style="display: none;">Next Question</button>
+<div id="score"></div>
+</div>
+
+<script>
+const quizData = [
+{
+  question: "The IAM role is configured with permissions limited to specific actions like invoking certain Bedrock models and reading from defined S3 buckets, minimizing the risk if the role is compromised. What security advantage does this represent?",
+  options: [
+    "A) Containerized Isolation",
+    "B) Least Privilege Principle Enforcement",
+    "C) Secure Credential Management",
+    "D) Immutable Infrastructure"
+  ],
+  correct: "B",
+  explanation: "This advantage ensures only necessary permissions are granted, reducing the blast radius of potential breaches. References: In `deploy-app-to-agentcore-runtime.sh`, lines 102-182 (definition of the INLINE_POLICY with specific Sids like \"AllowBedrockReasoningSonnet4\" and resource ARNs limiting access to exact models and buckets), and lines 194-197 (attaching the policy to the role during creation)."
+},
+{
+  question: "The application runs in a Docker container with a dedicated non-root user, isolating it from the host and other processes. What security advantage does this provide?",
+  options: [
+    "A) Auditing and Monitoring",
+    "B) Data Access Controls",
+    "C) Containerized Isolation",
+    "D) Service Trust Boundaries"
+  ],
+  correct: "C",
+  explanation: "This prevents container escapes and unauthorized access to host resources by running as a least-privileged user. References: In `deploy-app-to-agentcore-runtime.sh`, lines 219-239 (Dockerfile generation, including \"RUN useradd -m -u 1000 bedrock_agentcore\" at line 234 and \"USER bedrock_agentcore\" at line 235), and lines 271-291 (replacing the Dockerfile with the same content)."
+},
+{
+  question: "Environment variables for sensitive configurations (like model IDs and bucket names) are embedded directly in the Docker image, and no AWS access keys are used—instead, IAM roles handle authentication. What security advantage is this?",
+  options: [
+    "A) Compliance with AWS Best Practices",
+    "B) Immutable Infrastructure",
+    "C) Secure Credential Management",
+    "D) Least Privilege Principle Enforcement"
+  ],
+  correct: "C",
+  explanation: "This avoids exposing secrets at runtime and eliminates the need for long-lived credentials, relying on temporary role-based access. References: In `deploy-app-to-agentcore-runtime.sh`, lines 226-233 (ENV statements in the generated Dockerfile baking in variables like VECTOR_BUCKET_NAME and MODEL_ID); in `app.py`, lines 55-58 (get_aws_session() creates a boto3 session without explicit credentials, implying role assumption)."
+},
+{
+  question: "The IAM trust policy restricts role assumption exclusively to the Bedrock AgentCore service within the same AWS account, preventing external misuse. What security advantage does this enforce?",
+  options: [
+    "A) Service Trust Boundaries",
+    "B) Auditing and Monitoring",
+    "C) Data Access Controls",
+    "D) Containerized Isolation"
+  ],
+  correct: "A",
+  explanation: "This establishes strict controls on who or what can assume the role, enforcing trust only within defined AWS service boundaries. References: In `deploy-app-to-agentcore-runtime.sh`, lines 85-100 (definition of the TRUST_POLICY with conditions like \"StringEquals\": {\"aws:SourceAccount\": \"${ACCOUNT_ID}\"} and \"ArnLike\": {\"aws:SourceArn\": \"arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:*\"})."
+},
+{
+  question: "Integration with CloudWatch allows for logging agent activities, metrics, and anomaly detection, supporting audits and forensics. What security advantage does this provide?",
+  options: [
+    "A) Immutable Infrastructure",
+    "B) Secure Credential Management",
+    "C) Auditing and Monitoring",
+    "D) Data Access Controls"
+  ],
+  correct: "C",
+  explanation: "This enables centralized logging and metrics for detecting issues, compliance checks, and post-incident analysis. References: In `deploy-app-to-agentcore-runtime.sh`, lines 130-136 (Sid \"LogsBasic\" in INLINE_POLICY allowing CloudWatch actions like \"logs:PutLogEvents\"), and lines 323-326 (verification of CloudWatch log group creation with aws logs describe-log-groups)."
+},
+{
+  question: "Existing ECR images are deleted before new builds, ensuring deployments always use fresh, untampered artifacts without caching vulnerabilities. What security advantage is this?",
+  options: [
+    "A) Least Privilege Principle Enforcement",
+    "B) Compliance with AWS Best Practices",
+    "C) Immutable Infrastructure",
+    "D) Service Trust Boundaries"
+  ],
+  correct: "C",
+  explanation: "This promotes deployments that are consistent and free from outdated or compromised cached elements, reducing supply chain risks. References: In `deploy-app-to-agentcore-runtime.sh`, lines 75-80 (cleanup of existing ECR images with aws ecr batch-delete-image --image-ids imageTag=latest)."
+},
+{
+  question: "Permissions for S3 and S3Vectors are restricted to read-only operations (e.g., GetObject, QueryVectors) on specific resources, preventing unauthorized modifications. What security advantage does this represent?",
+  options: [
+    "A) Auditing and Monitoring",
+    "B) Data Access Controls",
+    "C) Containerized Isolation",
+    "D) Immutable Infrastructure"
+  ],
+  correct: "B",
+  explanation: "This protects data integrity by allowing only necessary read access, avoiding writes or deletions that could lead to data loss or tampering. References: In `deploy-app-to-agentcore-runtime.sh`, lines 150-170 (Sids \"AllowS3VectorsQuery\", \"AllowVectorBucketRead\", and \"AllowVectorObjectsRead\" in INLINE_POLICY, limiting to actions like \"s3:GetObject\" on specific ARNs)."
+},
+{
+  question: "The runtime leverages AWS-managed services like Bedrock for encryption and regional isolation, with error handling and retries in code to align with best practices. What security advantage is this?",
+  options: [
+    "A) Secure Credential Management",
+    "B) Service Trust Boundaries",
+    "C) Least Privilege Principle Enforcement",
+    "D) Compliance with AWS Best Practices"
+  ],
+  correct: "D",
+  explanation: "This inherits AWS features like transit encryption and managed isolation, while code handles failures securely to maintain reliability. References: In `app.py`, lines 70-71 (botocore Config with retries={'max_attempts': 3} for bedrock and s3vectors clients), and lines 76-80 (try-except blocks for ClientError during service client creation); in `deploy-app-to-agentcore-runtime.sh`, lines 110-120 (Sid \"AllowBedrockReasoningSonnet4\" in INLINE_POLICY tying to AWS-managed Bedrock resources)."
+}
+];
+
+let currentQuestion = 0;
+let score = 0;
+
+function showScore(includeCurrent = false) {
+const scoreDiv = document.getElementById('score');
+const questionsAnswered = includeCurrent ? currentQuestion + 1 : currentQuestion;
+const percentage = questionsAnswered === 0 ? 0 : (score / questionsAnswered) * 100;
+scoreDiv.innerText = `Current Score: ${score} out of ${questionsAnswered} (${percentage.toFixed(2)}%)`;
+scoreDiv.style.display = 'block';
+console.log(`Score updated: ${score}/${questionsAnswered} (${percentage.toFixed(2)}%)`);
+}
+
+function loadQuestion() {
+console.log(`Loading question ${currentQuestion + 1}`);
+const q = quizData[currentQuestion];
+document.getElementById('question-title').innerText = `Question ${currentQuestion + 1}: ${q.question}`;
+const optionsDiv = document.getElementById('options');
+optionsDiv.innerHTML = '';
+q.options.forEach((opt, index) => {
+  const label = document.createElement('label');
+  const input = document.createElement('input');
+  input.type = 'radio';
+  input.name = 'answer';
+  input.value = opt.charAt(0);
+  input.addEventListener('change', () => checkAnswer(input.value));
+  label.appendChild(input);
+  label.appendChild(document.createTextNode(` ${opt}`));
+  optionsDiv.appendChild(label);
+  optionsDiv.appendChild(document.createElement('br'));
+});
+document.getElementById('explanation').style.display = 'none';
+document.getElementById('next-btn').style.display = 'none';
+showScore(false);
+console.log('Question loaded successfully');
+}
+
+function checkAnswer(selected) {
+console.log(`Selected answer: ${selected} for question ${currentQuestion + 1}`);
+const q = quizData[currentQuestion];
+const expDiv = document.getElementById('explanation');
+expDiv.innerHTML = `<strong>Correct Answer: ${q.correct})</strong><br>${q.explanation}`;
+expDiv.className = selected === q.correct ? 'correct' : 'incorrect';
+if (selected === q.correct) {
+  score++;
+  console.log(`Correct answer! Score: ${score}`);
+} else {
+  console.log(`Incorrect answer. Correct: ${q.correct}`);
+}
+expDiv.style.display = 'block';
+document.getElementById('next-btn').style.display = 'block';
+showScore(true); // Include current question in score
+}
+
+document.getElementById('next-btn').addEventListener('click', () => {
+console.log(`Moving to next question. Current: ${currentQuestion + 1}`);
+currentQuestion++;
+if (currentQuestion < quizData.length) {
+  loadQuestion();
+} else {
+  console.log(`Quiz complete. Final score: ${score}/${quizData.length}`);
+  const quizContainer = document.getElementById('quiz-container');
+  quizContainer.innerHTML = '<h2>Quiz Complete!</h2>';
+  const scoreDiv = document.getElementById('score');
+  const percentage = (score / quizData.length) * 100;
+  scoreDiv.innerText = `Final Score: ${score} out of ${quizData.length} (${percentage.toFixed(2)}%)`;
+  scoreDiv.style.display = 'block';
+}
+});
+
+loadQuestion();
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+FROM public.ecr.aws/lambda/python:3.9
+
+# Remove old boto3/botocore from base image to avoid conflicts
+RUN rm -rf /var/runtime/boto* /var/runtime/botocore* /var/lang/lib/python3.9/site-packages/boto*
+
+# Install boto3/botocore with s3vectors support
+RUN pip install --no-cache-dir --upgrade \
+    boto3==1.40.5 \
+    botocore==1.40.5 \
+    requests>=2.31.0
+
+# Optional: check at build time
+RUN python -c "import boto3; \
+print('boto3:', boto3.__version__); \
+print('s3vectors available:', 's3vectors' in boto3.session.Session().get_available_services())"
+
+COPY s3vector_support_app.py /var/task/
+COPY cfnresponse.py /var/task/
+
+ENV PYTHONPATH=/var/lang/lib/python3.9/site-packages:/var/task
+
+CMD ["s3vector_support_app.handler"]

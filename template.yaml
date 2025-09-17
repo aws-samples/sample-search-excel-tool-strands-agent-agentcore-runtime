@@ -1,0 +1,397 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Video transcript indexing pipeline with S3, Lambda, and vector store
+
+Parameters:
+  Version:
+    Type: String
+    Description: Version of the stack (e.g., v40)
+  SourceBucketName:
+    Type: String
+    Description: S3 bucket for Excel file uploads
+  VectorBucketName:
+    Type: String
+    Description: S3 bucket for vector storage
+  EcrRepositoryName:
+    Type: String
+    Description: ECR repository for Lambda container images
+  VectorIndexName:
+    Type: String
+    Description: Vector index file name
+  EnableNotification:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Description: Enable S3 event notifications for Excel uploads
+
+Conditions:
+  EnableNotification: !Equals [!Ref EnableNotification, 'true']
+
+Resources:
+  LoggingBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub agentcore-source-bucket-logs-${AWS::AccountId}-${Version}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+  DLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      KmsMasterKeyId: !GetAtt KMSKey.Arn
+      QueueName: !Sub agentcore-dlq-${Version}
+
+  KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for Lambda env var encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: kms:*
+            Resource: '*'
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: '*'
+          - Effect: Allow
+            Principal:
+              Service: sqs.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: '*'
+
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    DependsOn: LoggingBucket
+    Properties:
+      BucketName: !Sub agentcore-source-bucket-${AWS::AccountId}-${Version}
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LoggingBucket
+        LogFilePrefix: access/
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldObjects
+            Status: Enabled
+            ExpirationInDays: 365
+      NotificationConfiguration:
+        !If
+          - EnableNotification
+          - LambdaConfigurations:
+              - Event: s3:ObjectCreated:*
+                Filter:
+                  S3Key:
+                    Rules:
+                      - Name: suffix
+                        Value: .xlsx
+                Function: !GetAtt CreateVectorIndexFunction.Arn
+          - !Ref AWS::NoValue
+
+  SourceBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SourceBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !Sub arn:aws:s3:::agentcore-source-bucket-${AWS::AccountId}-${Version}
+              - !Sub arn:aws:s3:::agentcore-source-bucket-${AWS::AccountId}-${Version}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  VectorStoreLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  VectorStoreLambdaPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:CreateBucket
+              - s3:DeleteBucket
+              - s3:ListBucket
+              - s3:HeadBucket
+            Resource: !Sub arn:aws:s3:::agentcore-vector-${AWS::AccountId}-${Version}
+          - Effect: Allow
+            Action:
+              - s3vectors:CreateVectorBucket
+              - s3vectors:DeleteVectorBucket
+              - s3vectors:ListVectorBuckets
+              - s3vectors:CreateIndex
+              - s3vectors:PutVectors
+              - s3vectors:ListVectors
+              - s3vectors:DeleteVectors
+              - s3vectors:ListIndexes
+              - s3vectors:DeleteIndex
+              - s3vectors:QueryVectors
+            Resource:
+              - !Sub arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/agentcore-vector-bucket-${AWS::AccountId}-${Version}
+              - !Sub arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/agentcore-vector-bucket-${AWS::AccountId}-${Version}/*
+          - Effect: Allow
+            Action:
+              - sqs:SendMessage
+            Resource: !GetAtt DLQ.Arn
+          - Effect: Allow
+            Action:
+              - xray:PutTraceSegments
+              - xray:PutTelemetryRecords
+            Resource: "*"
+          - Effect: Deny
+            Action:
+              - iam:PassRole
+              - iam:CreateRole
+              - iam:AttachRolePolicy
+              - iam:PutRolePolicy
+              - iam:CreatePolicy
+              - iam:AttachUserPolicy
+              - iam:PutUserPolicy
+              - iam:CreateGroup
+              - iam:AttachGroupPolicy
+              - iam:PutGroupPolicy
+            Resource: '*'
+          - Effect: Deny
+            Action:
+              - s3:GetObject
+              - s3:ListAllMyBuckets
+            Resource: '*'
+            Condition:
+              StringNotEquals:
+                s3:ResourceAccount: !Ref AWS::AccountId
+      Roles:
+        - !Ref VectorStoreLambdaRole
+
+  VectorStoreLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [VectorStoreLambdaPolicy, VectorStoreLambdaRole, DLQ]
+    Properties:
+      FunctionName: !Sub agentcore-vector-store-lambda-${Version}
+      Description: Lambda function to manage vector bucket custom resource
+      PackageType: Image
+      Code:
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepositoryName}:s3vectors"
+      Role: !GetAtt VectorStoreLambdaRole.Arn
+      Timeout: 900
+      ReservedConcurrentExecutions: 10
+      DeadLetterConfig:
+        TargetArn: !GetAtt DLQ.Arn
+      TracingConfig:
+        Mode: Active
+      Environment:
+        Variables:
+          PYTHONPATH: /var/task
+      KmsKeyArn: !GetAtt KMSKey.Arn
+
+  VectorStoreBucket:
+    Type: Custom::VectorStoreBucket
+    DeletionPolicy: Retain
+    DependsOn: VectorStoreLambda
+    Properties:
+      ServiceToken: !GetAtt VectorStoreLambda.Arn
+      BucketName: !Sub agentcore-vector-bucket-${AWS::AccountId}-${Version}
+
+  VectorLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  VectorLambdaPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:ListBucket
+              - s3:HeadBucket
+            Resource:
+              - !Sub arn:aws:s3:::agentcore-source-bucket-${AWS::AccountId}-${Version}
+              - !Sub arn:aws:s3:::agentcore-source-bucket-${AWS::AccountId}-${Version}/*
+              - !Sub arn:aws:s3:::agentcore-vector-bucket-${AWS::AccountId}-${Version}
+              - !Sub arn:aws:s3:::agentcore-vector-bucket-${AWS::AccountId}-${Version}/*
+          - Effect: Allow
+            Action:
+              - s3vectors:CreateIndex
+              - s3vectors:PutVectors
+              - s3vectors:ListVectors
+              - s3vectors:DeleteVectors
+              - s3vectors:ListIndexes
+              - s3vectors:DeleteIndex
+              - s3vectors:CreateVectorBucket
+              - s3vectors:DeleteVectorBucket
+              - s3vectors:ListVectorBuckets
+            Resource:
+              - !Sub arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/agentcore-vector-bucket-${AWS::AccountId}-${Version}
+              - !Sub arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/agentcore-vector-bucket-${AWS::AccountId}-${Version}/*
+          - Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+            Resource: arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0
+          - Effect: Allow
+            Action:
+              - sqs:SendMessage
+            Resource: !GetAtt DLQ.Arn
+          - Effect: Allow
+            Action:
+              - xray:PutTraceSegments
+              - xray:PutTelemetryRecords
+            Resource: "*"
+          - Effect: Deny
+            Action:
+              - iam:PassRole
+              - iam:CreateRole
+              - iam:AttachRolePolicy
+              - iam:PutRolePolicy
+              - iam:CreatePolicy
+              - iam:AttachUserPolicy
+              - iam:PutUserPolicy
+              - iam:CreateGroup
+              - iam:AttachGroupPolicy
+              - iam:PutGroupPolicy
+            Resource: '*'
+          - Effect: Deny
+            Action:
+              - s3:GetObject
+              - s3:ListAllMyBuckets
+            Resource: '*'
+            Condition:
+              StringNotEquals:
+                s3:ResourceAccount: !Ref AWS::AccountId
+      Roles:
+        - !Ref VectorLambdaExecutionRole
+
+  CreateVectorIndexFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: [VectorLambdaPolicy, VectorLambdaExecutionRole, DLQ]
+    Properties:
+      FunctionName: !Sub agentcore-index-function-${Version}
+      Description: Lambda function to process Excel uploads and create vector indexes
+      Role: !GetAtt VectorLambdaExecutionRole.Arn
+      Timeout: 900
+      MemorySize: 1024
+      Code:
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepositoryName}:index"
+      Environment:
+        Variables:
+          SOURCE_BUCKET: !Sub agentcore-source-bucket-${AWS::AccountId}-${Version}
+          VECTOR_BUCKET: !Sub agentcore-vector-bucket-${AWS::AccountId}-${Version}
+          INDEX_NAME: !Ref VectorIndexName
+      KmsKeyArn: !GetAtt KMSKey.Arn
+      PackageType: Image
+      ReservedConcurrentExecutions: 10
+      DeadLetterConfig:
+        TargetArn: !GetAtt DLQ.Arn
+      TracingConfig:
+        Mode: Active
+
+  CreateVectorIndexFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CreateVectorIndexFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub arn:aws:s3:::agentcore-source-bucket-${AWS::AccountId}-${Version}
+      SourceAccount: !Ref AWS::AccountId
+
+  CustomResourceLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [VectorLambdaPolicy, VectorLambdaExecutionRole, DLQ]
+    Properties:
+      FunctionName: !Sub agentcore-custom-resource-${Version}
+      Description: Lambda function to manage index custom resource
+      Role: !GetAtt VectorLambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 128
+      Code:
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepositoryName}:clean"
+      Environment:
+        Variables:
+          VECTOR_BUCKET: !Sub agentcore-vector-bucket-${AWS::AccountId}-${Version}
+          INDEX_NAME: !Ref VectorIndexName
+      KmsKeyArn: !GetAtt KMSKey.Arn
+      PackageType: Image
+      ReservedConcurrentExecutions: 10
+      DeadLetterConfig:
+        TargetArn: !GetAtt DLQ.Arn
+      TracingConfig:
+        Mode: Active
+
+  IndexCustomResource:
+    Type: Custom::IndexManager
+    DeletionPolicy: Retain
+    DependsOn: CustomResourceLambda
+    Properties:
+      ServiceToken: !GetAtt CustomResourceLambda.Arn
+      S3VectorBucket: !Sub agentcore-vector-bucket-${AWS::AccountId}-${Version}
+      IndexName: transcript-index
+
+Outputs:
+  SourceBucketName:
+    Value: !Ref SourceBucket
+    Description: S3 bucket for content_catalog.xlsx uploads
+  VectorBucketName:
+    Value: !Ref VectorStoreBucket
+    Description: S3 bucket for vector storage
+  VectorLambdaExecutionRoleArn:
+    Value: !GetAtt VectorLambdaExecutionRole.Arn
+    Description: ARN of the Lambda execution role
+  LambdaFunctionName:
+    Value: !Ref CreateVectorIndexFunction
+    Description: Lambda function for processing Excel uploads

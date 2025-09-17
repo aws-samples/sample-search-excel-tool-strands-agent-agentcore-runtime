@@ -1,0 +1,19 @@
+FROM public.ecr.aws/lambda/python:3.12
+
+COPY requirements.txt .
+
+# Install requirements but force boto3/botocore upgrade
+RUN pip install --no-cache-dir --upgrade \
+    -r requirements.txt \
+    boto3==1.40.5 \
+    botocore==1.40.5
+
+RUN python -c "import boto3; \
+print('boto3:', boto3.__version__); \
+print('s3vectors available:', 's3vectors' in boto3.session.Session().get_available_services())"
+
+COPY clean_index.py /var/task/
+COPY cfnresponse.py /var/task/
+
+ENTRYPOINT ["/lambda-entrypoint.sh"]
+CMD ["clean_index.handler"]

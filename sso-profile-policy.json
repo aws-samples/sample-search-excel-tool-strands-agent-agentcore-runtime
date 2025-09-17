@@ -1,0 +1,147 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudFormationStackManagement",
+      "Effect": "Allow",
+      "Action": ["cloudformation:*"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "S3BucketAndObjectManagement",
+      "Effect": "Allow",
+      "Action": ["s3:*"],
+      "Resource": ["arn:aws:s3:::*", "arn:aws:s3:::*/*"]
+    },
+    {
+      "Sid": "LambdaFunctionManagement",
+      "Effect": "Allow",
+      "Action": ["lambda:*"],
+      "Resource": "arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:*"
+    },
+    {
+      "Sid": "IAMLeastPrivilege",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ListRoles",
+        "iam:GetPolicy",
+        "iam:ListPolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:PassRole",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:CreateServiceLinkedRole",
+        "iam:CreateRole",
+        "iam:TagRole",
+        "iam:CreatePolicy",
+        "iam:DeletePolicy",
+        "iam:DeleteRole",
+        "iam:ListPolicyVersions",
+        "iam:GetRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::${ACCOUNT_ID}:role/agentcoreindexstack-*",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/agentcoreindexstack-*",
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+        "arn:aws:iam::${ACCOUNT_ID}:role/AmazonBedrockAgentCoreSDKCodeBuild-*"
+      ]
+    },
+    {
+      "Sid": "ECRRepositoryManagement",
+      "Effect": "Allow",
+      "Action": ["ecr:*"],
+      "Resource": "arn:aws:ecr:${REGION}:${ACCOUNT_ID}:repository/*"
+    },
+    {
+      "Sid": "LogGroupAndEventRead",
+      "Effect": "Allow",
+      "Action": ["logs:*"],
+      "Resource": "arn:aws:logs:${REGION}:${ACCOUNT_ID}:*"
+    },
+    {
+      "Sid": "BedrockModelInvoke",
+      "Effect": "Allow",
+      "Action": ["bedrock:*"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "VectorStoreApi",
+      "Effect": "Allow",
+      "Action": ["s3vectors:*"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "XRayTracing",
+      "Effect": "Allow",
+      "Action": [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "GlobalActions",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken",
+        "cloudformation:ListStacks",
+        "s3:ListAllMyBuckets",
+        "bedrock:ListFoundationModels",
+        "s3vectors:ListVectorBuckets"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CodeBuildManagement",
+      "Effect": "Allow",
+      "Action": ["codebuild:*"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockAgentCoreManagement",
+      "Effect": "Allow",
+      "Action": ["bedrock-agentcore:*"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SQSSendDLQ",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage",
+        "sqs:CreateQueue",
+        "sqs:TagQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:SetQueueAttributes",
+        "sqs:ListQueues"
+      ],
+      "Resource": "arn:aws:sqs:${REGION}:${ACCOUNT_ID}:agentcore-dlq-${VERSION}"
+    },
+    {
+      "Sid": "KMSBasic",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey",
+        "kms:CreateKey",
+        "kms:PutKeyPolicy",
+        "kms:TagResource",
+        "kms:ScheduleKeyDeletion",
+        "kms:CreateGrant",
+        "kms:EnableKeyRotation"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudTrailRead",
+      "Effect": "Allow",
+      "Action": ["cloudtrail:LookupEvents"],
+      "Resource": "*"
+    }
+  ]
+}

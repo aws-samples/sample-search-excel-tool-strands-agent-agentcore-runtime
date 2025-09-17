@@ -1,0 +1,11 @@
+FROM public.ecr.aws/lambda/python:3.12
+
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+RUN python -m nltk.downloader -d /var/task/nltk_data punkt punkt_tab
+
+COPY create_index.py /var/task/
+
+# Lambda requires this entrypoint for container images
+ENTRYPOINT ["/lambda-entrypoint.sh"]
+CMD ["create_index.handler"]

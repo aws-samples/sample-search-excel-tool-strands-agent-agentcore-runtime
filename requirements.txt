@@ -1,0 +1,7 @@
+pandas==2.3.1
+boto3==1.40.5         # upgraded for S3 Vectors support
+botocore==1.40.5      # must match boto3
+nltk==3.9.1
+openpyxl>=3.0.0
+requests>=2.31.0
+urllib3>=2.2.2
